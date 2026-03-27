@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional
 
-import anthropic
+from openai import OpenAI  # Ollama, OpenAI-uyumlu API sunar
 
 from agent_manager import AgentManager
 
@@ -125,7 +125,12 @@ class BasAgent:
         whatsapp_sender: Optional[Callable] = None,
         memory_path: str = "memory.json",
     ):
-        self.client = anthropic.Anthropic()
+        # Ollama, localhost:11434 üzerinde OpenAI-uyumlu API sunar
+        self.client = OpenAI(
+            base_url="http://localhost:11434/v1",
+            api_key="ollama",  # Ollama için şart değil ama zorunlu alan
+        )
+        self.model = "llama3.2"
         self.manager = agent_manager
         self.send = whatsapp_sender
         self.memory_path = Path(memory_path)
@@ -173,34 +178,39 @@ class BasAgent:
     # ------------------------------------------------------------------ #
 
     def _run_loop(self, messages: list) -> str:
+        # Sistem mesajını başa ekle
+        full_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + messages
+
+        # TOOLS'u OpenAI formatına çevir
+        tools_openai = [
+            {"type": "function", "function": t} for t in TOOLS
+        ]
+
         while True:
-            response = self.client.messages.create(
-                model="claude-opus-4-6",
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=messages,
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=full_messages,
+                tools=tools_openai,
             )
 
-            if response.stop_reason == "end_turn":
-                return next(
-                    (b.text for b in response.content if b.type == "text"), ""
-                )
+            msg = response.choices[0].message
+            finish = response.choices[0].finish_reason
 
-            if response.stop_reason == "tool_use":
-                messages.append({"role": "assistant", "content": response.content})
+            # Cevap metin ise bitir
+            if finish == "stop" or not msg.tool_calls:
+                return msg.content or ""
 
-                tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        result = self._execute(block.name, block.input)
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result,
-                        })
+            # Tool çağrısı varsa çalıştır
+            full_messages.append(msg)
 
-                messages.append({"role": "user", "content": tool_results})
+            for tc in msg.tool_calls:
+                inp = json.loads(tc.function.arguments)
+                result = self._execute(tc.function.name, inp)
+                full_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
 
     # ------------------------------------------------------------------ #
     # Araç çalıştırıcı                                                     #

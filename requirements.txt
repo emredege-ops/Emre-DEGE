@@ -4,3 +4,4 @@ anyio
 flask
 twilio
 python-dotenv
+openai
