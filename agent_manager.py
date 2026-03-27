@@ -100,7 +100,8 @@ class AgentManager:
             async for message in query(
                 prompt=prompt,
                 options=ClaudeAgentOptions(
-                    allowed_tools=["Read", "Glob", "Grep", "Bash", "Write", "Edit"],
+                    # Sadece okuma araçları — yazma/bash/edit kesinlikle yok
+                    allowed_tools=["Read", "Glob", "Grep"],
                 ),
             ):
                 # "stopped" işaretlendiyse sonucu yoksay
