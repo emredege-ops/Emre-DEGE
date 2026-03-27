@@ -16,12 +16,18 @@ if not exist .env (
     exit /b 1
 )
 
-:: ── ngrok kontrolü ───────────────────────────────────────────────────────────
-if not exist ngrok.exe (
-    echo  [HATA] ngrok.exe bulunamadı!
-    echo  Çözüm: https://ngrok.com/download adresinden indirip bu klasöre koyun.
-    pause
-    exit /b 1
+:: ── ngrok kontrolü (Microsoft Store veya PATH'teki ngrok) ───────────────────
+where ngrok >nul 2>&1
+if errorlevel 1 (
+    if not exist ngrok.exe (
+        echo  [HATA] ngrok bulunamadı!
+        echo  Çözüm: Microsoft Store'dan ngrok'u açın veya https://ngrok.com/download
+        pause
+        exit /b 1
+    )
+    set NGROK_CMD=ngrok.exe
+) else (
+    set NGROK_CMD=ngrok
 )
 
 :: ── Bağımlılıklar ─────────────────────────────────────────────────────────────
@@ -38,7 +44,7 @@ echo.
 :: ── ngrok başlat ─────────────────────────────────────────────────────────────
 echo  [2/3] ngrok başlatılıyor...
 taskkill /f /im ngrok.exe >nul 2>&1
-start /min "" ngrok.exe http 5000
+start /min "" %NGROK_CMD% http 5000
 
 :: URL hazır olana kadar bekle
 set PUBLIC_URL=
