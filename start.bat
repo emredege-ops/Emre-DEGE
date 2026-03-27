@@ -32,7 +32,7 @@ if errorlevel 1 (
 
 :: ── Bağımlılıklar ─────────────────────────────────────────────────────────────
 echo  [1/3] Python bağımlılıkları kuruluyor...
-pip install -q -r requirements.txt
+python -m pip install -q -r requirements.txt
 if errorlevel 1 (
     echo  [HATA] pip install başarısız!
     pause
