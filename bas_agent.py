@@ -1,16 +1,17 @@
 """
-Baş Agent — sadece agent oluşturma ve yönetiminden sorumludur.
+Baş Agent — agent oluşturma/yönetimi + onaylı dosya/komut işlemleri.
 
 Yetkiler:
   ✅ Agent başlat, listele, durdur, durumunu sorgula
-  ❌ Dosya yazma / okuma yok
-  ❌ Shell komutu çalıştırma yok
+  ✅ Dosya yaz — KULLANICI ONAYI gerekir (evet/hayır)
+  ✅ Komut çalıştır — KULLANICI ONAYI gerekir (evet/hayır)
 
-Alt agentlar da varsayılan olarak SADECE okuma yapabilir.
+Alt agentlar SADECE okuma yapabilir.
 Herhangi bir değişiklik için kullanıcı onayı gerekir.
 """
 
 import json
+import subprocess
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -23,22 +24,21 @@ from agent_manager import AgentManager
 SYSTEM_PROMPT = """\
 Sen Emre'nin kişisel AI asistanısın. WhatsApp üzerinden konuşuyorsunuz.
 
-Görevin SADECE şunlar:
+Görevin:
 1. Emre'nin istediği agentları başlatmak.
 2. Çalışan agentları listelemek, durumlarını raporlamak, durdurmak.
+3. Dosya oluşturmak/düzenlemek — ama ÖNCE onay istemek zorundasın.
+4. Komut çalıştırmak — ama ÖNCE onay istemek zorundasın.
 
-YASAK olanlar:
-- Dosya oluşturma, silme, değiştirme
-- Komut çalıştırma
-- Herhangi bir sistem değişikliği
+KURAL: dosya_yaz veya komut_calistir kullanmadan önce mutlaka
+"[İşlem açıklaması] — onaylıyor musunuz? (evet/hayır)" diye sor.
+Tool'u SADECE kullanıcı "evet" dedikten sonra çağır.
 
-Bir agent oluştururken mutlaka şunu belirt:
-"Bu agent SADECE okuma yapar, onayın olmadan hiçbir şeyi değiştirmez."
+Alt agentlar ise HİÇBİR ZAMAN değişiklik yapamaz (sadece okuma).
 
 Kurallar:
 - Türkçe yaz, kısa ve net ol.
 - Teknik ayrıntıyı sadece sorulunca ver.
-- Görev dışı istekler için: "Bu işlemi yapma yetkim yok, sadece agent yönetimi yapabilirim."
 """
 
 TOOLS = [
@@ -50,7 +50,7 @@ TOOLS = [
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "Agent'a verilecek görev. Otomatik olarak 'sadece oku, değiştirme' kısıtı eklenir.",
+                    "description": "Agent'a verilecek görev.",
                 },
                 "agent_id": {
                     "type": "string",
@@ -87,15 +87,53 @@ TOOLS = [
             "required": ["agent_id"],
         },
     },
+    {
+        "name": "dosya_yaz",
+        "description": (
+            "Bir dosyayı diske yazar veya üzerine yazar. "
+            "SADECE kullanıcı 'evet' onayı verdikten sonra çağır."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "yol": {
+                    "type": "string",
+                    "description": "Dosya yolu (örn. 'scraper.py')",
+                },
+                "icerik": {
+                    "type": "string",
+                    "description": "Dosyaya yazılacak içerik",
+                },
+            },
+            "required": ["yol", "icerik"],
+        },
+    },
+    {
+        "name": "komut_calistir",
+        "description": (
+            "Bir kabuk komutu çalıştırır. "
+            "SADECE kullanıcı 'evet' onayı verdikten sonra çağır."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "komut": {
+                    "type": "string",
+                    "description": "Çalıştırılacak komut (örn. 'pip install requests')",
+                },
+            },
+            "required": ["komut"],
+        },
+    },
 ]
 
 # Alt agentlara eklenen zorunlu güvenlik kısıtı
 READONLY_SUFFIX = """
 
 ⚠️ GÜVENLİK KURALI: Bu agent SADECE okuma ve analiz yapabilir.
-- Hiçbir dosyayı OLUŞTURMA, SILME veya DEĞIŞTIRME.
+- Hiçbir dosyayı OLUŞTURMA, SİLME veya DEĞİŞTİRME.
 - Hiçbir komut ÇALIŞTIRMA (pip install dahil).
-- Hiçbir sistem ayarını DEĞIŞTIRME.
+- Hiçbir sistem ayarını DEĞİŞTİRME.
 - Bulduklarını RAPORLA, değiştirme.
 Kullanılabilir araçlar: Read, Glob, Grep (sadece okuma)."""
 
@@ -117,6 +155,8 @@ class BasAgent:
         self.memory_path = Path(memory_path)
         self._lock = threading.Lock()
         self._history: list[dict] = []
+        # Onay bekleyen işlem: {"tool": ..., "inp": ..., "desc": ...}
+        self._pending: Optional[dict] = None
         self._load_memory()
 
     # ------------------------------------------------------------------ #
@@ -143,6 +183,29 @@ class BasAgent:
 
     def process_message(self, user_message: str) -> str:
         with self._lock:
+            lower = user_message.strip().lower()
+
+            # Onay bekleyen işlem varsa evet/hayır kontrolü yap
+            if self._pending is not None:
+                if lower in ("evet", "e", "yes", "y"):
+                    pending = self._pending
+                    self._pending = None
+                    result = self._execute(pending["tool"], pending["inp"])
+                    reply = f"✅ Yapıldı.\n{result}"
+                    self._history.append({"role": "user", "content": user_message})
+                    self._history.append({"role": "assistant", "content": reply})
+                    self._save_memory()
+                    return reply
+                elif lower in ("hayır", "hayir", "h", "no", "n"):
+                    self._pending = None
+                    reply = "❌ İptal edildi."
+                    self._history.append({"role": "user", "content": user_message})
+                    self._history.append({"role": "assistant", "content": reply})
+                    self._save_memory()
+                    return reply
+                # "evet/hayır" değilse normal konuşmaya devam et, pending'i temizle
+                self._pending = None
+
             self._history.append({"role": "user", "content": user_message})
             messages = list(self._history)
 
@@ -186,6 +249,10 @@ class BasAgent:
                     "content": result,
                 })
 
+                # Onay bekleniyor sinyali — döngüyü kır ve kullanıcıya ilet
+                if result.startswith("__ONAY_BEKLE__:"):
+                    return result[len("__ONAY_BEKLE__:"):]
+
     # ------------------------------------------------------------------ #
     # Araç çalıştırıcı                                                     #
     # ------------------------------------------------------------------ #
@@ -193,7 +260,6 @@ class BasAgent:
     def _execute(self, name: str, inp: dict) -> str:
         try:
             if name == "agent_baslat":
-                # Alt agenta güvenlik kısıtını otomatik ekle
                 guvenli_prompt = inp["prompt"] + READONLY_SUFFIX
                 agent_id = self.manager.start_agent(
                     prompt=guvenli_prompt,
@@ -225,6 +291,44 @@ class BasAgent:
             elif name == "agent_durdur":
                 ok = self.manager.stop_agent(inp["agent_id"])
                 return "Durduruldu." if ok else f"Bulunamadı: {inp['agent_id']}"
+
+            elif name == "dosya_yaz":
+                yol = inp["yol"]
+                icerik = inp["icerik"]
+                desc = f"*{yol}* dosyası yazılacak ({len(icerik)} karakter)"
+                with self._lock:
+                    self._pending = {"tool": "_dosya_yaz_execute", "inp": inp, "desc": desc}
+                return f"__ONAY_BEKLE__:📝 {desc}\nOnaylıyor musunuz? (evet/hayır)"
+
+            elif name == "komut_calistir":
+                komut = inp["komut"]
+                desc = f"Komut çalıştırılacak: `{komut}`"
+                with self._lock:
+                    self._pending = {"tool": "_komut_execute", "inp": inp, "desc": desc}
+                return f"__ONAY_BEKLE__:⚙️ {desc}\nOnaylıyor musunuz? (evet/hayır)"
+
+            elif name == "_dosya_yaz_execute":
+                path = Path(inp["yol"])
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(inp["icerik"], encoding="utf-8")
+                return f"`{inp['yol']}` yazıldı."
+
+            elif name == "_komut_execute":
+                proc = subprocess.run(
+                    inp["komut"],
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                out = proc.stdout.strip()
+                err = proc.stderr.strip()
+                parts = []
+                if out:
+                    parts.append(f"Çıktı:\n{out[:600]}")
+                if err:
+                    parts.append(f"Hata:\n{err[:400]}")
+                return "\n".join(parts) if parts else "Komut tamamlandı (çıktı yok)."
 
         except Exception as exc:
             return f"Hata: {exc}"
