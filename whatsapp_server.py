@@ -16,6 +16,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 
 from agent_manager import AgentInfo, AgentManager
 from bas_agent import BasAgent
+from mizan_agent import mizan_kontrol_et
 from config import (
     OWNER_WHATSAPP,
     TWILIO_ACCOUNT_SID,
@@ -81,6 +82,16 @@ def webhook():
     # Mesajı arka planda işle (Flask sync'i bloklamamak için)
     def process():
         try:
+            lower = incoming_msg.lower()
+
+            # --- Mizan komutu (LLM gerekmez, doğrudan çalıştır) ---
+            if "mizan" in lower:
+                send_whatsapp(from_number, "🔍 Mizan analiz ediliyor, lütfen bekleyin...")
+                reply = mizan_kontrol_et()
+                send_whatsapp(from_number, reply)
+                return
+
+            # --- Diğer mesajlar Baş Agent'a ---
             reply = agent.process_message(incoming_msg)
             send_whatsapp(from_number, reply)
         except Exception as exc:
