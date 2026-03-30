@@ -35,13 +35,16 @@ WhatsApp'tan okunacak — çok uzun olmasın, en önemli bulgulara odaklan.
 
 
 def _en_guncel_xlsx(klasor: str) -> Optional[Path]:
-    """Klasördeki en son değiştirilen .xlsx dosyasını döner."""
+    """Önce 'mizan' içeren, yoksa en son değiştirilen .xlsx dosyasını döner."""
     klasor_path = Path(klasor)
     if not klasor_path.exists():
         return None
     dosyalar = list(klasor_path.glob("*.xlsx"))
     if not dosyalar:
         return None
+    mizan_dosyalar = [p for p in dosyalar if "mizan" in p.name.lower()]
+    if mizan_dosyalar:
+        return max(mizan_dosyalar, key=lambda p: p.stat().st_mtime)
     return max(dosyalar, key=lambda p: p.stat().st_mtime)
 
 
