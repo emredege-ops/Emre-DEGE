@@ -111,7 +111,7 @@ class BasAgent:
             base_url="http://localhost:11434/v1",
             api_key="ollama",
         )
-        self.model = "llama3.2"
+        self.model = "llama3.1:8b"
         self.manager = agent_manager
         self.send = whatsapp_sender
         self.memory_path = Path(memory_path)
