@@ -4,7 +4,10 @@ Mizan Kontrol Agenti
 Belirtilen klasördeki en güncel .xlsx dosyasını okur,
 Claude API ile muhasebe kontrolü yapar ve bulguları döner.
 
-Kontroller:
+mizan_kontrol_et  -> kural tabanlı kontrol (mizan_kontrol.py), API gerekmez
+mizan_ai_analiz   -> tek dosya için Claude yorumu (ANTHROPIC_API_KEY gerekir)
+
+AI kontrolleri:
   - Borç toplamı ≠ Alacak toplamı
   - Negatif bakiyeli hesaplar
   - Genel muhasebe değerlendirmesi
@@ -14,7 +17,6 @@ import os
 from pathlib import Path
 from typing import Optional
 
-import anthropic
 import pandas as pd
 
 from config import ANTHROPIC_API_KEY, MIZAN_KLASOR
@@ -110,6 +112,28 @@ def _excel_oku(dosya: Path) -> str:
 
 def mizan_kontrol_et(klasor: Optional[str] = None) -> str:
     """
+    Kural tabanlı kontrol: her şirketin en güncel mizanında ters bakiye,
+    cari virman (120/320, 159/320, 120/340 ...) ve dönem sonu mahsupları.
+    API anahtarı gerektirmez. Excel raporu mizan klasörüne kaydedilir.
+    """
+    from mizan_kontrol import calistir
+
+    hedef_klasor = klasor or MIZAN_KLASOR
+    if not hedef_klasor:
+        return (
+            "⚠️ Mizan klasörü ayarlanmamış.\n"
+            ".env dosyasına MIZAN_KLASOR=C:\\...\\mizan_klasoru ekleyin."
+        )
+    try:
+        metin, rapor = calistir(hedef_klasor)
+    except Exception as exc:
+        return f"❌ Mizan kontrol hatası: {exc}"
+    alt = f"\n\n📄 Detaylı Excel: {rapor.name}" if rapor else ""
+    return f"📊 *Mizan Kontrol Raporu*\n\n{metin}{alt}"
+
+
+def mizan_ai_analiz(klasor: Optional[str] = None) -> str:
+    """
     Mizan dosyasını okur ve Claude ile analiz eder.
     Bulguları metin olarak döner (WhatsApp'a gönderilecek).
     """
@@ -135,6 +159,8 @@ def mizan_kontrol_et(klasor: Optional[str] = None) -> str:
 
     # Claude API çağrısı
     try:
+        import anthropic
+
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         mesaj = client.messages.create(
             model="claude-sonnet-4-5",

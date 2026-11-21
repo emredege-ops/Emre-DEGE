@@ -43,6 +43,29 @@ WhatsApp (Twilio) → ngrok → Flask (whatsapp_server.py)
 
 ---
 
+## Mizan Kontrolü (`mizan_kontrol.py`)
+
+Kural tabanlı çalışır (API anahtarı gerekmez). WhatsApp'tan "mizan" yazınca veya elle:
+
+```
+python mizan_kontrol.py C:\Users\muhasebe4\Desktop\mizanlar
+```
+
+- Klasördeki her **alt klasör = bir şirket**, içindeki en güncel mizan alınır
+  (adında "mizan" geçen dosyalar öncelikli). Kök dizindeki dosyalar ayrı şirket sayılır.
+- Kontroller:
+  - **Ters bakiye**: Tekdüzen Hesap Planı'na göre ters çalışan alt hesaplar
+    (120 alacak, 320 borç, 100 kasa alacak, 159 alacak, 340 borç, 360 borç ...) + önerilen virman kaydı
+  - **Cari virman**: Aynı firma 120 ve 320'de (ayrıca 120-340, 159-320, 131-331, 136-336, 135/196-335)
+    zıt bakiyeli ise mahsup tutarı ve kaydı. Aynı cari aynı ana hesapta birden çok alt hesapta
+    zıt bakiyeliyse iç virman. Unvanlar normalize edilerek eşleşir (LTD ŞTİ, SAN. TİC. vb. atılır),
+    benzer isimler "kontrol et" notuyla gelir.
+  - **Dönem sonu**: 191-391 KDV mahsubu yapılmamış mı, 193/371/370
+  - **Denge**: Borç = Alacak
+- Çıktı: klasöre `mizan_kontrol_raporu_YYYYMMDD_HHMM.xlsx` (Özet, Ters Bakiye, Cari Virman, Dönem Sonu)
+
+---
+
 ## Kurulum (Sıfırdan)
 
 ### 1. Gereksinimler
